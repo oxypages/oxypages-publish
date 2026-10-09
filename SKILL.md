@@ -26,7 +26,7 @@ There are two ways to publish, and you must choose based on whether the user has
 |---|---|---|
 | Needs | nothing | `OXYPAGES_API_KEY` |
 | Lives | 30 minutes, then gone unless claimed | permanently, on the user's account |
-| Size | 5 MB, 10 files | the account's plan |
+| Size | 3 MB, 10 files (the Free plan, so it is always claimable) | the account's plan |
 | Rate | a small hourly cap per address | a far higher hourly cap |
 | Use it for | a quick preview, "show me what this looks like live" | anything the user wants to keep |
 
@@ -86,7 +86,7 @@ Refusals come back as `{"ok": false, "error": "…"}` with an HTTP 4xx. The comm
 | Status | Meaning | What to do |
 |---|---|---|
 | 400 | no `index.html` at the top level, or a bad body | fix the file layout and retry once |
-| 413 | over 5 MB or more than 10 files | trim the site, or ask the user for an API key (paid plans allow more) |
+| 413 | over 3 MB or more than 10 files | trim the site, or ask the user for an API key (paid plans allow more) |
 | 415 | a file type that is not hosted (binaries, executables) | remove it |
 | 422 | the moderation pass refused the content | tell the user why; do not retry with small edits |
 | 429 | the hourly cap is reached | relay `error` verbatim - it names the way past it, which is a free account and an API key. It does not state a number, so do not invent one |
