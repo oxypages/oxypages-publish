@@ -1,6 +1,6 @@
 ---
 name: oxypages-publish
-description: Publish a static website (HTML, CSS, JS, images, or a ZIP) to OxyPages and hand the user a live HTTPS link. Works with no account for a 30-minute unclaimed link, or with an OxyPages API key for a permanent site the user owns.
+description: Publish a static website (HTML, CSS, JS, images, or a ZIP) or a built framework app (React, Vue, Svelte, Vite, Astro, Next.js static export) to OxyPages and hand the user a live HTTPS link. Works with no account for a 30-minute unclaimed link, or with an OxyPages API key for a permanent site the user owns.
 version: 1.0.0
 homepage: https://oxypages.com
 metadata:
@@ -18,15 +18,15 @@ metadata:
 
 # Publish a website to OxyPages
 
-OxyPages is static website hosting. You hand it HTML (and any CSS, JS, images or fonts it uses) and it is live on an HTTPS link in seconds, on a `*.myoxypages.com` subdomain. No git, no build step, no CLI.
+OxyPages is static website hosting. You hand it HTML (and any CSS, JS, images or fonts it uses), or the output folder of a framework build, and it is live on an HTTPS link in seconds, on a `*.myoxypages.com` subdomain. OxyPages does not build a no-account upload: for a framework app you run the build first.
 
-There are two ways to publish, and you must choose based on whether the user has given you an API key.
+There are two ways to publish, and you must choose based on whether the user has given you an API key. Without a key, also choose by what you are publishing: an HTML page or hand-written static files go to `POST /drops` (Path 1); a framework project (a `package.json` with a build script) is built locally and its output goes to `POST /drops/app` (Path 1b).
 
 | | Unclaimed link (no key) | Owned site (API key) |
 |---|---|---|
 | Needs | nothing | `OXYPAGES_API_KEY` |
 | Lives | 30 minutes, then gone unless claimed | permanently, on the user's account |
-| Size | 3 MB, 10 files (the Free plan, so it is always claimable) | the account's plan |
+| Size | 3 MB, 10 files for a page or site; 25 MB, 500 files for a built app | the account's plan |
 | Rate | a small hourly cap per address | a far higher hourly cap |
 | Use it for | a quick preview, "show me what this looks like live" | anything the user wants to keep |
 
@@ -91,6 +91,47 @@ Refusals come back as `{"ok": false, "error": "…"}` with an HTTP 4xx. The comm
 | 422 | the moderation pass refused the content | tell the user why; do not retry with small edits |
 | 429 | the hourly cap is reached | relay `error` verbatim - it names the way past it, which is a free account and an API key. It does not state a number, so do not invent one |
 
+## Path 1b - a built app, no account
+
+Use this for a framework project (React, Vue, Svelte, Vite, Astro, a Next.js static export) when there is no `OXYPAGES_API_KEY`. OxyPages never builds it for you.
+
+1. Run the project's build: `npm run build`, or the `build` script in `package.json` with the project's package manager.
+2. Find the output folder, usually `dist/`, `build/` or `out/`. It must hold an `index.html`.
+3. Send what is inside that folder. Never the source folder, `node_modules` or `package.json`: source is refused with `needs_build` (HTTP 422), and the fix is to build first.
+
+```bash
+npm run build
+(cd dist && zip -r ../dist.zip .)
+curl -sS -X POST https://api.oxypages.com/drops/app \
+  -H "X-Oxy-Agent: openclaw" \
+  -F "file=@dist.zip"
+
+# Or as JSON: text as utf8, binaries as base64
+curl -sS -X POST https://api.oxypages.com/drops/app \
+  -H "X-Oxy-Agent: openclaw" \
+  -H "Content-Type: application/json" \
+  -d '{"files": [
+        {"path": "index.html", "content": "<!doctype html>…"},
+        {"path": "assets/index-3f9a1c2b.js", "content": "…"},
+        {"path": "logo.png", "content": "iVBORw0KGgo…", "encoding": "base64"}
+      ]}'
+```
+
+What applies: Single-Page App routing (unknown paths serve `index.html`), the build's `_redirects` and `_headers` files, up to 25 MB and 500 files, live for 30 minutes. `node_modules`, `.git` and source maps are left out and counted in `warnings`.
+
+The reply has `ok`, `kind: "app"`, `url`, `claim_url`, `expires_at`, `root`, `files`, `bytes`, and `warnings` when something was left out. Relay the `url`, the 30-minute expiry and the `claim_url`, which keeps the app in a free account. Claiming turns it into a project in their account; after that, the keyed `deploy_app` tool (with `project`) deploys new versions of it.
+
+Refusals specific to this path:
+
+| Code | Meaning | What to do |
+|---|---|---|
+| `needs_build` (422) | you sent source code | run the build and send the output folder |
+| `choose_root` (422) | no `index.html` at the top, several HTML files | send again with `root` set to one of `html_files`, or `"none"` |
+| `too_large` / `too_many_files` (413) | over the cap | send only the output folder, without source maps |
+| `bad_file_type` (415) | the multipart `file` is not a `.zip` | zip the output folder |
+
+For a build too large for one request: `POST https://api.oxypages.com/drops/app/manifest` with `{"files": [{"path": "index.html", "size": 1234, "sha256": "<hex>"}, …]}`, PUT each file to the `url` in its `upload` entry with the `headers` given there, then `POST https://api.oxypages.com/drops/app/finalize` with `{"upload_id": "…", "token": "…"}` from the manifest reply.
+
 ## Path 2 - a permanent site on the user's account
 
 Use this when `OXYPAGES_API_KEY` is set. Every request carries it as a bearer token. Keys start with `oxy_`; if the key is rejected with 401, tell the user to create a new one at app.oxypages.com, Profile, API Keys.
@@ -143,7 +184,9 @@ curl -sS https://api.oxypages.com/limits
 
 It returns the per-page and per-asset ceilings, the ZIP upload ceiling, the
 unclaimed-drop ceilings and each plan's storage. It does **not** carry the
-hourly publish caps, and no number in this skill should either. A `429`
+hourly publish caps, and no number in this skill should either. It does not
+carry the built-app drop's ceilings yet either; those are the 25 MB and 500
+files stated in Path 1b, and a `413` refusal names the live one. A `429`
 answer does not state a number at all - it explains in `error` that a free
 account lifts the limit, and that sentence is what to relay.
 
@@ -156,10 +199,11 @@ account lifts the limit, and that sentence is what to relay.
 
 ## MCP instead of curl
 
-If your runtime speaks MCP, the same account operations are available as tools at `https://mcp.oxypages.com/mcp` (Streamable HTTP, bearer `OXYPAGES_API_KEY`): `list_sites`, `create_site`, `deploy_site` (the JSON file list above) and `list_deployments`. There is no MCP path for the no-account link; use the `POST /drops` call for that.
+If your runtime speaks MCP, the same account operations are available as tools at `https://mcp.oxypages.com/mcp` (Streamable HTTP, bearer `OXYPAGES_API_KEY`): `list_sites`, `create_site`, `deploy_site` (the JSON file list above) and `list_deployments` (plus `deploy_app` on accounts with Web Apps turned on). With no `Authorization` header at all, the same URL offers the no-account paths: `publish_page` (Path 1) and `deploy_app` (Path 1b, a built app's output files). Both return `url` and `claim_url`.
 
 ## Phrases to use with the user
 
+- After an unclaimed app deploy: "Your app is live at {url} for the next 30 minutes. To keep it, open this claim link and sign in or create a free OxyPages account: {claim_url}."
 - After an unclaimed publish: "It's live at {url} for the next 30 minutes. To keep it, claim it here: {claim_url} - that puts it in a free OxyPages account, and you'll get an API key so I can publish permanent sites for you in future."
 - After an owned deploy: "Deployed to {url} (version {deployment_number})."
 - On a moderation refusal: "OxyPages declined to host this page: {error}. I can't publish it there."
