@@ -1,7 +1,7 @@
 ---
 name: oxypages-publish
-description: Publish a static website (HTML, CSS, JS, images, or a ZIP) or a built framework app (React, Vue, Svelte, Vite, Astro, Next.js static export) to OxyPages and hand the user a live HTTPS link. Works with no account for a 30-minute unclaimed link, or with an OxyPages API key for a permanent site the user owns.
-version: 1.0.0
+description: Publish a static website (HTML, CSS, JS, images, or a ZIP) or a built framework app (React, Vue, Svelte, Vite, Astro, Next.js static export) to OxyPages and hand the user a live HTTPS link. Works with no account for a 30-minute unclaimed link, or with an OxyPages API key for a permanent site the user owns, including editing a site they already have.
+version: 1.1.0
 homepage: https://oxypages.com
 metadata:
   openclaw:
@@ -150,7 +150,7 @@ curl -sS -X POST https://api.oxypages.com/v1/sites \
   -d '{"name": "Acme landing page"}'
 ```
 
-Ask the user which site to deploy into when they already have one that fits. Do not create a new site for every publish; a redeploy replaces the site's files, which is what "update my site" means.
+Ask the user which site to deploy into when they already have one that fits. Do not create a new site for every publish. To make a CHANGE to a site they already have, use step 3 (edit only what changed) instead of redeploying every file.
 
 **2. Deploy the files.** Either a ZIP or a JSON file list. A deploy replaces the whole site, so send every file each time.
 
@@ -172,6 +172,25 @@ curl -sS -X POST "https://api.oxypages.com/v1/sites/$SITE_ID/deployments" \
 ```
 
 The response carries `ok`, `url`, `deployment_number`, `pages`, `bytes`, `files` and, when some files were skipped, `warnings`. Relay the `url`. Version history is at `GET /v1/sites/$SITE_ID/deployments`.
+
+**3. Edit a site the user already has: change only some files.** Read the live files, edit the text files, then send back only what changed. Everything you do not send, including images and fonts, is kept, and the change is a new version.
+
+```bash
+# Live files: text files with "content", images and other binaries as "url"
+curl -sS "https://api.oxypages.com/v1/sites/$SITE_ID/files" \
+  -H "Authorization: Bearer $OXYPAGES_API_KEY"
+# One file only
+curl -sS "https://api.oxypages.com/v1/sites/$SITE_ID/files?path=css/style.css" \
+  -H "Authorization: Bearer $OXYPAGES_API_KEY"
+
+# Publish only the changed text files (and any deletions)
+jq -n --rawfile c index.html '{files: [{path: "index.html", content: $c}], deletions: []}' |
+  curl -sS -X POST "https://api.oxypages.com/v1/sites/$SITE_ID/files" \
+    -H "Authorization: Bearer $OXYPAGES_API_KEY" \
+    -H "Content-Type: application/json" --data-binary @-
+```
+
+This route takes text files only (HTML, CSS, JS, JSON, SVG, text); a binary file is refused with 415, so to replace an image deploy the whole site with step 2. The reply has the same `url` and `deployment_number` as a deploy.
 
 ## Limits, without guessing
 
@@ -199,7 +218,7 @@ account lifts the limit, and that sentence is what to relay.
 
 ## MCP instead of curl
 
-If your runtime speaks MCP, the same account operations are available as tools at `https://mcp.oxypages.com/mcp` (Streamable HTTP, bearer `OXYPAGES_API_KEY`): `list_sites`, `create_site`, `deploy_site` (the JSON file list above) and `list_deployments` (plus `deploy_app` on accounts with Web Apps turned on). With no `Authorization` header at all, the same URL offers the no-account paths: `publish_page` (Path 1) and `deploy_app` (Path 1b, a built app's output files). Both return `url` and `claim_url`.
+If your runtime speaks MCP, the same account operations are available as tools at `https://mcp.oxypages.com/mcp` (Streamable HTTP, bearer `OXYPAGES_API_KEY`): `list_sites`, `create_site`, `deploy_site` (the JSON file list above), `read_site_files` and `update_site_files` (step 3) and `list_deployments` (plus `deploy_app` on accounts with Web Apps turned on). With no `Authorization` header at all, the same URL offers the no-account paths: `publish_page` (Path 1) and `deploy_app` (Path 1b, a built app's output files). Both return `url` and `claim_url`.
 
 ## Phrases to use with the user
 
